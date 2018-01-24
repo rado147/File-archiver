@@ -207,8 +207,14 @@ void archivate_file(char* name)
 		out.write((char*)& one_int, sizeof(one_int));
 	}
 
-	delete[] arr;
+	//writing the original size of the file
+	in.clear();
+	in.seekg(0, ios::end);
+	size_t file_sz = static_cast<size_t>(in.tellg()); 
+	out.write((char*)& file_sz, sizeof(file_sz));
 
+	delete[] arr;
+	
 	out.close();
 	in.close();
 }
@@ -218,6 +224,16 @@ void archivate_file(char* name)
 void extract_archive(char* name)
 {
 	ifstream in(name, ios::binary);
+	if (in.fail())
+		throw exception("Cannot open file!");
+
+	//reading the size of the original file
+	size_t file_sz;
+	in.seekg(-4, ios::end); 
+	in.read((char*)& file_sz, sizeof(file_sz));
+	
+	in.clear();
+	in.seekg(0, ios::beg);
 
 	int* arr = new int[257];
 	for (size_t i = 0; i < 256; i++)
@@ -238,7 +254,8 @@ void extract_archive(char* name)
 	int one_int;
 	huffman_node* cur_node = t.root;
 
-	while (!in.eof())
+	size_t writen_bytes = 0;
+	while (writen_bytes < file_sz)
 	{
 		in.read((char*)& one_int, sizeof(one_int)); 
 		int counter = 31;
@@ -252,15 +269,20 @@ void extract_archive(char* name)
 
 			if (!cur_node->left && !cur_node->right)
 			{
-				out.write((char*)& cur_node->character, sizeof(cur_node->character));
-				cur_node = t.root;
+					out.write((char*)& cur_node->character, sizeof(cur_node->character));
+					writen_bytes++;
+					
+					cur_node = t.root;
 			}
 
 			counter--;
+	
+			if (writen_bytes == file_sz)
+				break;
 		}
 	}
 	delete[] arr;
-
+	
 	out.close();
 	in.close();
 }

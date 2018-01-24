@@ -9,12 +9,17 @@
 class priority_queue
 {
 private:
+	void copy_from(priority_queue const&);
+
+private:
 	huffman_tree* container;
 	size_t container_size;
 	size_t container_used;
 
 public:
 	priority_queue();
+	priority_queue(priority_queue const&);
+	priority_queue& operator=(priority_queue const&);
 	~priority_queue();
 	void extend_queue();
 	void enqueue(huffman_tree&);
@@ -26,7 +31,34 @@ public:
 	void fill_queue(int*&);
 };
 
+inline void priority_queue::copy_from(priority_queue const& other)
+{
+	this->container = new huffman_tree[other.container_size];
+
+	for (size_t i = 0; i < other.container_used; i++)
+		this->container[i] = other.container[i];
+
+	this->container_used = other.container_used;
+	this->container_size = other.container_size;
+}
+
 inline priority_queue::priority_queue() : container(new huffman_tree[2]), container_size(2), container_used(0) {}
+
+inline priority_queue::priority_queue(priority_queue const& other)
+{
+	this->copy_from(other);
+}
+
+inline priority_queue& priority_queue::operator=(priority_queue const& other)
+{
+	if (this != &other)
+	{
+		delete[] this->container;
+
+		this->copy_from(other);
+	}
+	return *this;
+}
 
 inline priority_queue::~priority_queue()
 {
