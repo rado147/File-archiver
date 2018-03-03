@@ -7,41 +7,6 @@
 #include <fstream>
 #include "direct.h"
 
-char* create_archive_name(char* name, char* postf)
-{
-	char* n_name = new char[256];
-	size_t n_sz = strlen(name);
-	size_t postf_sz = strlen(postf);
-
-	size_t i = 0;
-	for (i; i < n_sz; i++)
-		n_name[i] = name[i];
-
-	for (i; i < n_sz + postf_sz; i++)
-		n_name[i] = postf[i - n_sz];
-
-	n_name[i] = '\0';
-
-	return n_name;
-}
-
-char* decompressed_name(char* name)
-{
-	size_t index = strlen(name) - 1;
-	
-	while (index > 0 && name[index] != '_')
-		index--;
-
-	char* n_name = new char[strlen(name) - 7];
-
-	size_t i = 0;
-	for (i; i < index; i++)
-		n_name[i] = name[i];
-
-	n_name[i] = '\0';
-
-	return n_name;
-}
 
 //helping function concatenating two trees
 //used in the function for creating a single tree
@@ -215,88 +180,7 @@ void archivate_file_inner(ofstream& out, char* name)
 	in.close();
 }
 
-void archivate_file(char* name)
-{
-	ofstream out;
-	out.open(create_archive_name(name, "_arch.bin"), ios::binary);
-	if (out.fail())
-		throw exception("Cannot open file!");
-
-	int f_num = 1;
-	out.write((char*)& f_num, sizeof(f_num));
-	
-	archivate_file_inner(out, name);
-
-	out.close();
-}
-
 //extracts the content of an archive with a given name
-
-void extract_archive(char* name)
-{
-	ifstream in(name, ios::binary);
-	if (in.fail())
-		throw exception("Cannot open file!");
-
-	//reading the size of the original file
-	size_t file_sz;
-	in.seekg(-4, ios::end); 
-	in.read((char*)& file_sz, sizeof(file_sz));
-	
-	in.clear();
-	in.seekg(0, ios::beg);
-
-	int* arr = new int[257];
-	for (size_t i = 0; i < 256; i++)
-	{
-		in.read((char*)& arr[i], sizeof(arr[i]));
-	}
-
-	priority_queue q;
-	q.fill_queue(arr);
-
-	huffman_tree t;
-	t = create_huffman_tree(q);
-	
-	ofstream out(decompressed_name(name), ios::binary);
-	if (out.fail())
-		throw exception("Cannot open file!");
-
-	int one_int;
-	huffman_node* cur_node = t.root;
-
-	size_t writen_bytes = 0;
-	while (writen_bytes < file_sz)
-	{
-		in.read((char*)& one_int, sizeof(one_int)); 
-		int counter = 31;
-		while (counter >= 0)
-		{
-			bool bit = (one_int >> counter) & 1U;
-			if (bit)
-				cur_node = cur_node->right;
-			else
-				cur_node = cur_node->left;
-
-			if (!cur_node->left && !cur_node->right)
-			{
-					out.write((char*)& cur_node->character, sizeof(cur_node->character));
-					writen_bytes++;
-					
-					cur_node = t.root;
-			}
-
-			counter--;
-	
-			if (writen_bytes == file_sz)
-				break;
-		}
-	}
-	delete[] arr;
-	
-	out.close();
-	in.close();
-}
 
 void extract_archive_inner(ifstream& in, ofstream& out, long long next_file_start)
 {
@@ -356,7 +240,7 @@ void extract_archive_inner(ifstream& in, ofstream& out, long long next_file_star
 	delete[] arr;
 }
 
-void recursive_traversal_dirs(ofstream& out, char* name)
+void recursive_traversal_dirs(ofstream& out, char* name, size_t name_start_pos, size_t position_in_file)
 {
 	static size_t consecutive_file = 0;
 
@@ -376,24 +260,25 @@ void recursive_traversal_dirs(ofstream& out, char* name)
 		strcat_s(n_name, 300, box->d_name);
 
 		if (box->d_name[0] != '.' && is_directory(n_name))
-			recursive_traversal_dirs(out, n_name);
+			recursive_traversal_dirs(out, n_name, name_start_pos, position_in_file);
 
 		else if (box->d_name[0] != '.' && is_regular(n_name))
 		{
 			out.clear();
 
 			long long cur_position = static_cast<long long>(out.tellp());
-			out.seekp(sizeof(int) + consecutive_file * sizeof(long long), ios::beg);
-			int t = static_cast<int>(out.tellp());
+			out.seekp(position_in_file + consecutive_file * sizeof(long long), ios::beg);
 			out.write((char*)& cur_position, sizeof(long long));
 			
 			out.clear();
 			out.seekp(cur_position, ios::beg);
 			consecutive_file++;
 
-			size_t name_sz = strlen(box->d_name);
+			size_t name_sz = strlen(n_name) - name_start_pos;
 			out.write((char*)& name_sz, sizeof(name_sz));
-			out.write((char*)& box->d_name, name_sz);
+			
+			for (size_t i = name_start_pos; i < strlen(n_name); i++)
+				out.write(&n_name[i], sizeof(n_name[i]));
 			
 			archivate_file_inner(out, n_name);
 
@@ -417,47 +302,105 @@ void archivate(char* name)
 	if (out.fail())
 		throw exception("Cannnot open file!");
 
+	delete[] arch_name;
+
 	if (is_regular(name))
 	{
+		size_t dirs_number = 0;
 		size_t files_number = 1;
-		size_t name_sz = strlen(name);
-		long long start_position = sizeof(files_number) + sizeof(long long);
-	
+		size_t name_sz;
+		long long start_position = sizeof(files_number) + sizeof(dirs_number) + sizeof(long long);
+
+		out.write((char*)& dirs_number, sizeof(dirs_number));
 		out.write((char*)& files_number, sizeof(files_number));
 		out.write((char*)& start_position, sizeof(start_position));
+		
+		size_t i = strlen(name);
+		size_t original_name_sz = i;
+		while (name[i - 1] != '/')
+			i--;
+
+		name_sz = strlen(name) - i;
 		out.write((char*)& name_sz, sizeof(name_sz));
-		out.write(name, name_sz);
+
+		for (size_t j = i; j < original_name_sz; j++)
+			out.write(&name[j], sizeof(name[j]));
 
 		archivate_file_inner(out, name);
 	}
 
-	else if (is_directory(name))
+	if (is_directory(name))
 	{
+		size_t index = strlen(name) - 1;
+
+		while (name[index] != '/')
+			index--;
+
+		size_t start_pos = ++index;
+
+		out.seekp(sizeof(size_t), ios::beg);
+		
+		size_t dirs_number = count_dirs_number(name, out, start_pos);
+
+		size_t cur_position = static_cast<size_t>(out.tellp());
+
+		out.clear();
+		out.seekp(0, ios::beg);
+		out.write((char*)& dirs_number, sizeof(dirs_number));
+		
+		out.clear();
+		out.seekp(cur_position, ios::beg);
+
 		size_t files_number = count_files_number(name);
 
 		out.write((char*)& files_number, sizeof(files_number));
-		out.seekp(sizeof(int) + files_number * sizeof(long long), ios::beg);
 
-		recursive_traversal_dirs(out, name);
+		size_t position_in_file = static_cast<size_t>(out.tellp());
+		
+		out.seekp(cur_position + sizeof(size_t) + files_number * sizeof(long long), ios::beg);
+		recursive_traversal_dirs(out, name, start_pos, position_in_file);
+
+		out.close();
 	}
-
-	delete[] arch_name;
-	out.close();
 }
-
 
 void extract(char* name)
 {
-	ofstream out;
-	
 	ifstream in;
+
 	in.open(name, ios::binary);
 	if (in.fail())
-		throw exception("Cannnot read file!");
+		throw exception("Cannot open archive!");
+
+	size_t dirs_number;
+	in.read((char*)& dirs_number, sizeof(dirs_number));
+
+	while (dirs_number != 0)
+	{
+		size_t name_sz;
+		in.read((char*)& name_sz, sizeof(name_sz));
+
+		char dir_name[200];
+		char cur_symbol;
+		for (size_t i = 0; i < name_sz; i++)
+		{
+			in.read(&cur_symbol, sizeof(cur_symbol));
+			dir_name[i] = cur_symbol;
+		}
+		dir_name[name_sz] = '\0';
+
+		_mkdir(dir_name);
+
+		dirs_number--;
+	}
+
+	ofstream out;
+
+	size_t files_start_pos = static_cast<size_t>(in.tellg());
 
 	size_t files_number;
 	in.read((char*)& files_number, sizeof(files_number));
-	
+
 	long long cur_file_start;
 	long long next_file_start;
 	size_t consecutive_file = 0;
@@ -466,9 +409,9 @@ void extract(char* name)
 	{
 		in.clear();
 
-		in.seekg(sizeof(int) + consecutive_file * sizeof(long long), ios::beg);
+		in.seekg(files_start_pos + sizeof(size_t) + consecutive_file * sizeof(long long), ios::beg);
 		in.read((char*)& cur_file_start, sizeof(long long));
-		
+
 		if (consecutive_file < files_number - 1)
 			in.read((char*)& next_file_start, sizeof(long long));
 		else
@@ -479,17 +422,21 @@ void extract(char* name)
 
 		in.clear();
 		in.seekg(cur_file_start, ios::beg);
-		
+
 		size_t name_sz;
 		in.read((char*)& name_sz, sizeof(name_sz));
 
 		char file_name[300];
-		in.read((char*)& file_name, name_sz);
+		in.read(file_name, name_sz);
 		file_name[name_sz] = '\0';
-		
+
 		out.open(file_name, ios::binary);
 		if (out.fail())
-			throw exception("Cannot open file!");
+		{
+			out.close();
+			consecutive_file++;
+			continue;
+		}
 
 		extract_archive_inner(in, out, next_file_start);
 		out.close();
@@ -498,7 +445,7 @@ void extract(char* name)
 
 		consecutive_file++;
 	}
-
+	
 	in.close();
 }
 
