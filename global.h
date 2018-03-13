@@ -6,6 +6,7 @@
 #include "hash.h"
 #include <fstream>
 #include "direct.h"
+#include <thread>
 
 
 //helping function concatenating two trees
@@ -364,6 +365,48 @@ void archivate(char* name)
 	}
 }
 
+void extract_one_file(char* name, size_t consecutive_file, long long files_start_pos, 
+	long long cur_file_start, long long next_file_start, size_t files_number)
+{
+	ifstream in;
+	in.open(name, ios::binary);
+
+	ofstream out;
+
+	in.seekg(files_start_pos + sizeof(size_t) + consecutive_file * sizeof(long long), ios::beg);
+	in.read((char*)& cur_file_start, sizeof(long long));
+
+	if (consecutive_file < files_number - 1)
+		in.read((char*)& next_file_start, sizeof(long long));
+	else
+	{
+		in.seekg(0, ios::end);
+		next_file_start = static_cast<long long>(in.tellg());
+	}
+
+	in.clear();
+	in.seekg(cur_file_start, ios::beg);
+
+	size_t name_sz;
+	in.read((char*)& name_sz, sizeof(name_sz));
+
+	char file_name[300];
+	in.read(file_name, name_sz);
+	file_name[name_sz] = '\0';
+
+	out.open(file_name, ios::binary);
+	if (out.fail())
+	{
+		out.close();
+		return;
+	}
+
+	extract_archive_inner(in, out, next_file_start);
+
+	out.close();
+	in.close();
+}
+
 void extract(char* name)
 {
 	ifstream in;
@@ -372,6 +415,7 @@ void extract(char* name)
 	if (in.fail())
 		throw exception("Cannot open archive!");
 
+	//creating the directories here
 	size_t dirs_number;
 	in.read((char*)& dirs_number, sizeof(dirs_number));
 
@@ -394,59 +438,31 @@ void extract(char* name)
 		dirs_number--;
 	}
 
-	ofstream out;
-
+	//handling with extracting the files starts here
 	size_t files_start_pos = static_cast<size_t>(in.tellg());
 
 	size_t files_number;
 	in.read((char*)& files_number, sizeof(files_number));
+	
+	in.close();
 
+	std::thread* my_threads = new std::thread[files_number];
+	
 	long long cur_file_start;
 	long long next_file_start;
 	size_t consecutive_file = 0;
-
+	
 	while (consecutive_file < files_number)
 	{
-		in.clear();
-
-		in.seekg(files_start_pos + sizeof(size_t) + consecutive_file * sizeof(long long), ios::beg);
-		in.read((char*)& cur_file_start, sizeof(long long));
-
-		if (consecutive_file < files_number - 1)
-			in.read((char*)& next_file_start, sizeof(long long));
-		else
-		{
-			in.seekg(0, ios::end);
-			next_file_start = static_cast<long long>(in.tellg());
-		}
-
-		in.clear();
-		in.seekg(cur_file_start, ios::beg);
-
-		size_t name_sz;
-		in.read((char*)& name_sz, sizeof(name_sz));
-
-		char file_name[300];
-		in.read(file_name, name_sz);
-		file_name[name_sz] = '\0';
-
-		out.open(file_name, ios::binary);
-		if (out.fail())
-		{
-			out.close();
-			consecutive_file++;
-			continue;
-		}
-
-		extract_archive_inner(in, out, next_file_start);
-		out.close();
-
-		std::cout << file_name << " is extracted..." << std::endl;
-
+		my_threads[consecutive_file] = std::thread(extract_one_file, name, consecutive_file, 
+			files_start_pos, cur_file_start, next_file_start, files_number);
+		
 		consecutive_file++;
 	}
-	
-	in.close();
+	for (size_t thread_number = 0; thread_number < files_number; thread_number++)
+		my_threads[thread_number].join();
+
+	delete[] my_threads;
 }
 
 
